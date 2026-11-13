@@ -136,15 +136,14 @@ function extractKeys(text) {
   const merged = rejoinStrings(text);
   const keys = new Map();
   let m;
+  LOADFILE_FIND.lastIndex = 0;
   while ((m = LOADFILE_FIND.exec(merged)) !== null) {
     if (!keys.has(m[2])) keys.set(m[2], `garde loadFile ${m[1]}`);
   }
+  FIND_CMP.lastIndex = 0;
   while ((m = FIND_CMP.exec(merged)) !== null) {
     if (!keys.has(m[1])) keys.set(m[1], 'garde find == -1');
   }
-  // garde == obfusqué en "= '+'= -1" (déjà recollé en "= = -1" ci-dessus
-  // via FIND_CMP tolérant). Fichiers *.rsa.sqf déposés :
-  while ((m = /([A-Za-z0-9_\\/.-]*\.rsa\.sqf)/gi.exec(merged)) !== null) { break; }
   return [...keys.entries()].map(([key, kind]) => ({ key, kind }));
 }
 
@@ -152,6 +151,7 @@ function randomizedPaths(text) {
   const out = [];
   const re = /"([^"\n]*\\[^"\n]*)"/g;
   let m;
+  re.lastIndex = 0;
   while ((m = re.exec(text)) !== null) {
     const segments = m[1].replace(/^\\+|\\+$/g, '').split(/\\+/).filter(Boolean);
     if (segments.length < 2) continue;
@@ -204,9 +204,15 @@ function render(r, code) {
   document.getElementById('code').textContent = code;
 }
 
+const MAX_INPUT = 5 * 1024 * 1024;
+
 function run() {
   const text = document.getElementById('input').value;
   if (!text.trim()) { alert('Colle d\'abord du code obfusqué.'); return; }
+  if (text.length > MAX_INPUT) {
+    alert(`Entrée trop volumineuse (${(text.length / 1048576).toFixed(1)} Mo, max 5 Mo). Découpe le fichier ou analyse les fonctions une par une.`);
+    return;
+  }
   const r = analyze(text);
   render(r, rejoinStrings(text));
 }
