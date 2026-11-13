@@ -8,7 +8,7 @@
   :root {
     --bg: #0d1117; --panel: #161b22; --border: #30363d;
     --text: #e6edf3; --muted: #8b949e; --accent: #d29922;
-    --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+    --ok: #3fb950; --bad: #f85149;
     --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   }
   * { box-sizing: border-box; }
@@ -50,12 +50,14 @@
   button:hover { background: #30363d; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #1a1a1a; font-weight: 600; }
   button.primary:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .5; cursor: wait; }
   .dropzone {
     border: 2px dashed var(--border); border-radius: 6px; padding: 14px;
     text-align: center; color: var(--muted); font-size: 13px; cursor: pointer;
     margin-top: 12px;
   }
   .dropzone:hover, .dropzone.drag { border-color: var(--accent); color: var(--text); }
+  #status { margin-top: 10px; font-size: 13px; color: var(--accent); min-height: 18px; }
   #report { flex: 1; overflow: auto; font-size: 14px; }
   .badge {
     display: inline-block; padding: 3px 10px; border-radius: 999px;
@@ -85,19 +87,21 @@
 <body>
 <header>
   <h1>OBF Arma 3 — <span>Déobfuscateur ObfuSQF</span></h1>
-  <p>Analyse de missions protégées par ObfuSQF : clé stockée en clair, chaînes découpées avec + ou /, dossiers aléatoires. Tout tourne dans ton navigateur, rien n'est envoyé nulle part.</p>
+  <p>Analyse de missions protégées par ObfuSQF : clé stockée en clair, chaînes découpées avec + ou /, dossiers aléatoires. Tout tourne dans ton navigateur, rien n'est envoyé nulle part. Gros fichiers pris en charge (analyse en flux).</p>
 </header>
 <main>
   <div class="grid">
     <div class="panel">
       <h2>Entrée — code SQF obfusqué</h2>
       <textarea id="input" spellcheck="false" placeholder="Colle ici le contenu d'une fonction MAV_Sub_ / mav_tag_fnc_* ou d'un fichier .sqf obfusqué…"></textarea>
-      <div class="dropzone" id="dropzone">ou glisse-dépose ici un ou plusieurs fichiers (.sqf, .sqm, …)</div>
+      <div class="dropzone" id="dropzone">ou glisse-dépose ici un ou plusieurs fichiers (.sqf, .sqm, …) — les gros fichiers sont analysés en flux, sans limite de taille</div>
+      <div id="status"></div>
       <div class="row">
         <button class="primary" id="btn-run">Déobfusquer</button>
         <button id="btn-clear">Effacer</button>
         <button id="btn-sample">Charger l'exemple</button>
         <button id="btn-copy">Copier le résultat</button>
+        <a id="btn-dl" style="display:none"><button type="button">⬇ Télécharger le fichier déobfusqué</button></a>
       </div>
     </div>
     <div class="panel">
@@ -106,7 +110,7 @@
     </div>
   </div>
   <div class="panel" style="margin-top:20px;">
-    <h2>Code déobfusqué</h2>
+    <h2>Code déobfusqué <span id="code-note" style="text-transform:none;letter-spacing:0;color:var(--muted)"></span></h2>
     <pre id="code">// Le code recollé apparaîtra ici.</pre>
   </div>
 </main>
@@ -123,6 +127,10 @@ const FIND_CMP = /find\s+"([^"]+)"\s*=\s*=?\s*=\s*-1/gi;
 const RANDOM_SEGMENT = /(?:^|[^A-Za-z0-9])([a-z0-9]{8,12})(?![A-Za-z0-9])/;
 const OBFUSQF_REF = /\bObfuSQF\b/gi;
 const CALL_COMPILE = /call\s+compile\s*\(/gi;
+
+const SMALL = 5 * 1024 * 1024;   // au-delà : analyse en flux
+const PIECE = 4 * 1024 * 1024;   // taille des morceaux (coupés aux fins de ligne)
+const PREVIEW = 60 * 1024;       // aperçu du code déobfusqué affiché
 
 function rejoinStrings(text) {
   return text.replace(JOINER, '');
@@ -155,7 +163,7 @@ function randomizedPaths(text) {
   while ((m = re.exec(text)) !== null) {
     const segments = m[1].replace(/^\\+|\\+$/g, '').split(/\\+/).filter(Boolean);
     if (segments.length < 2) continue;
-    const randomish = segments.filter(s => RANDOM_SEGMENT.test(s) && s.length >= 8 && /^[a-z0-9]+$/.test(s));
+    const randomish = segments.filter(s => s.length >= 8 && /^[a-z0-9]+$/.test(s));
     if (randomish.length >= Math.max(2, segments.length - 1)) out.push(m[1]);
   }
   return [...new Set(out)];
@@ -171,50 +179,205 @@ function analyze(text) {
   return { obfuscated, joiners, keys, paths, refs, compiles };
 }
 
+/* ---- mode flux pour les gros fichiers ---- */
+
+function newAcc() {
+  return { joiners: 0, refs: 0, compiles: 0, keys: new Map(), paths: new Set(), signals: 0 };
+}
+
+function accChunk(acc, text) {
+  const j = countJoiners(text);
+  const r = (text.match(OBFUSQF_REF) || []).length;
+  const c = (text.match(CALL_COMPILE) || []).length;
+  acc.joiners += j; acc.refs += r; acc.compiles += c;
+  acc.signals += j + r + c;
+  for (const k of extractKeys(text)) {
+    if (!acc.keys.has(k.key)) acc.keys.set(k.key, k.kind);
+    else acc.signals++;
+  }
+  for (const p of randomizedPaths(text)) {
+    if (!acc.paths.has(p)) { acc.paths.add(p); acc.signals++; }
+  }
+}
+
+function yieldUI() { return new Promise(r => setTimeout(r, 0)); }
+
+function splitPieces(text, max = PIECE) {
+  const pieces = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + max, text.length);
+    if (end < text.length) {
+      const nl = text.lastIndexOf('\n', end);
+      if (nl > start) end = nl + 1;
+    }
+    pieces.push(text.slice(start, end));
+    start = end;
+  }
+  return pieces;
+}
+
+async function analyzeTextBig(text) {
+  const acc = newAcc();
+  const out = [];
+  const pieces = splitPieces(text);
+  for (let i = 0; i < pieces.length; i++) {
+    accChunk(acc, pieces[i]);
+    out.push(rejoinStrings(pieces[i]));
+    if (i % 4 === 0) {
+      setStatus(`Analyse… ${Math.round(((i + 1) / pieces.length) * 100)} %`);
+      await yieldUI();
+    }
+  }
+  return { acc, out };
+}
+
+async function analyzeFileStream(file) {
+  const acc = newAcc();
+  const out = [];
+  let pos = 0, rest = '', i = 0;
+  while (pos < file.size) {
+    const slice = file.slice(pos, Math.min(pos + PIECE, file.size));
+    const buf = rest + await slice.text();
+    let piece;
+    if (pos + PIECE >= file.size) {
+      piece = buf;
+    } else {
+      const nl = buf.lastIndexOf('\n');
+      piece = nl > 0 ? buf.slice(0, nl + 1) : buf;
+    }
+    rest = buf.slice(piece.length);
+    pos += piece.length - rest.length;
+    accChunk(acc, piece);
+    out.push(rejoinStrings(piece));
+    if (++i % 4 === 0) {
+      setStatus(`Analyse de ${file.name}… ${Math.round((pos / file.size) * 100)} %`);
+      await yieldUI();
+    }
+  }
+  return { acc, out };
+}
+
+/* ---- rendu ---- */
+
 function esc(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function render(r, code) {
+function setStatus(msg) { document.getElementById('status').textContent = msg || ''; }
+
+function accIsObfuscated(acc) {
+  return acc.signals > 0 || acc.keys.size > 0 || acc.paths.size > 0;
+}
+
+function renderAcc(acc, preview, note) {
   const report = document.getElementById('report');
   let html = '';
-  html += r.obfuscated
+  html += accIsObfuscated(acc)
     ? '<span class="badge yes">⚠ Mission obfusquée détectée</span>'
     : '<span class="badge no">✓ Aucune trace ObfuSQF détectée</span>';
 
   html += '<div class="section"><h3>Signaux</h3>';
-  html += `<div class="kv">Séquences de chaînes découpées recollées : <b>${r.joiners}</b></div>`;
-  html += `<div class="kv">Appels <b>call compile(...)</b> : ${r.compiles}</div>`;
-  html += `<div class="kv">Références <b>ObfuSQF</b> : ${r.refs}</div>`;
+  html += `<div class="kv">Séquences de chaînes découpées recollées : <b>${acc.joiners}</b></div>`;
+  html += `<div class="kv">Appels <b>call compile(...)</b> : ${acc.compiles}</div>`;
+  html += `<div class="kv">Références <b>ObfuSQF</b> : ${acc.refs}</div>`;
   html += '</div>';
 
   html += '<div class="section"><h3>Clés trouvées</h3>';
-  html += r.keys.length
-    ? r.keys.map(k => `<div class="kv"><b>${esc(k.key)}</b><br><span style="color:var(--muted)">${esc(k.kind)}</span></div>`).join('')
+  html += acc.keys.size
+    ? [...acc.keys.entries()].map(([k, kind]) => `<div class="kv"><b>${esc(k)}</b><br><span style="color:var(--muted)">${esc(kind)}</span></div>`).join('')
     : '<div class="kv" style="color:var(--muted)">aucune</div>';
   html += '</div>';
 
   html += '<div class="section"><h3>Chemins à dossiers aléatoires</h3>';
-  html += r.paths.length
-    ? r.paths.map(p => `<div class="kv">${esc(p)}</div>`).join('')
+  html += acc.paths.size
+    ? [...acc.paths].map(p => `<div class="kv">${esc(p)}</div>`).join('')
     : '<div class="kv" style="color:var(--muted)">aucun</div>';
   html += '</div>';
 
   report.innerHTML = html;
-  document.getElementById('code').textContent = code;
+  document.getElementById('code').textContent = preview;
+  document.getElementById('code-note').textContent = note || '';
 }
 
-const MAX_INPUT = 5 * 1024 * 1024;
+function offerDownload(parts, filename) {
+  const link = document.getElementById('btn-dl');
+  if (link.href) URL.revokeObjectURL(link.href);
+  const blob = new Blob(parts, { type: 'text/plain' });
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.style.display = 'inline';
+  link.querySelector('button').textContent = `⬇ Télécharger le fichier déobfusqué (${(blob.size / 1048576).toFixed(1)} Mo)`;
+}
 
-function run() {
+function hideDownload() {
+  const link = document.getElementById('btn-dl');
+  if (link.href) URL.revokeObjectURL(link.href);
+  link.removeAttribute('href');
+  link.style.display = 'none';
+}
+
+/* ---- actions ---- */
+
+async function run() {
   const text = document.getElementById('input').value;
-  if (!text.trim()) { alert('Colle d\'abord du code obfusqué.'); return; }
-  if (text.length > MAX_INPUT) {
-    alert(`Entrée trop volumineuse (${(text.length / 1048576).toFixed(1)} Mo, max 5 Mo). Découpe le fichier ou analyse les fonctions une par une.`);
-    return;
+  if (!text.trim()) { alert("Colle d'abord du code obfusqué."); return; }
+  hideDownload();
+  document.getElementById('btn-run').disabled = true;
+  try {
+    if (text.length > SMALL) {
+      const { acc, out } = await analyzeTextBig(text);
+      renderAcc(acc, out.join('').slice(0, PREVIEW), '— aperçu des 60 premiers Ko (fichier complet téléchargeable)');
+      offerDownload(out, 'deobfuscated.sqf');
+    } else {
+      const r = analyze(text);
+      const acc = newAcc();
+      acc.joiners = r.joiners; acc.refs = r.refs; acc.compiles = r.compiles;
+      for (const k of r.keys) acc.keys.set(k.key, k.kind);
+      for (const p of r.paths) acc.paths.add(p);
+      renderAcc(acc, rejoinStrings(text), '');
+    }
+    setStatus('');
+  } finally {
+    document.getElementById('btn-run').disabled = false;
   }
-  const r = analyze(text);
-  render(r, rejoinStrings(text));
+}
+
+async function runStreamFiles(list) {
+  hideDownload();
+  document.getElementById('btn-run').disabled = true;
+  try {
+    const total = newAcc();
+    const allOut = [];
+    for (const file of list) {
+      setStatus(`Analyse de ${file.name} (${(file.size / 1048576).toFixed(1)} Mo)…`);
+      const { acc, out } = await analyzeFileStream(file);
+      total.joiners += acc.joiners; total.refs += acc.refs; total.compiles += acc.compiles;
+      total.signals += acc.signals;
+      for (const [k, kind] of acc.keys) if (!total.keys.has(k)) total.keys.set(k, `${kind} — ${file.name}`);
+      for (const p of acc.paths) total.paths.add(p);
+      allOut.push(`// ===== ${file.name} =====\n`, ...out, '\n');
+    }
+    renderAcc(total, allOut.join('').slice(0, PREVIEW), '— aperçu des 60 premiers Ko (fichier complet téléchargeable)');
+    offerDownload(allOut, 'deobfuscated.sqf');
+    setStatus('');
+  } finally {
+    document.getElementById('btn-run').disabled = false;
+  }
+}
+
+async function handleFiles(files) {
+  const list = [...files];
+  if (!list.length) return;
+  const totalSize = list.reduce((s, f) => s + f.size, 0);
+  if (totalSize > SMALL) {
+    await runStreamFiles(list);
+  } else {
+    const readers = list.map(f => f.text().then(t => `// ===== ${f.name} =====\n${t}`));
+    const parts = await Promise.all(readers);
+    document.getElementById('input').value = parts.join('\n\n');
+    await run();
+  }
 }
 
 document.getElementById('btn-run').addEventListener('click', run);
@@ -222,6 +385,9 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   document.getElementById('input').value = '';
   document.getElementById('report').innerHTML = '<div class="empty">Aucune analyse pour l\'instant.</div>';
   document.getElementById('code').textContent = '// Le code recollé apparaîtra ici.';
+  document.getElementById('code-note').textContent = '';
+  setStatus('');
+  hideDownload();
 });
 document.getElementById('btn-sample').addEventListener('click', () => {
   document.getElementById('input').value = SAMPLE;
@@ -245,14 +411,6 @@ dz.addEventListener('drop', e => {
   e.preventDefault(); dz.classList.remove('drag');
   handleFiles(e.dataTransfer.files);
 });
-
-function handleFiles(files) {
-  const readers = [...files].map(f => f.text().then(t => `// ===== ${f.name} =====\n${t}`));
-  Promise.all(readers).then(parts => {
-    document.getElementById('input').value = parts.join('\n\n');
-    run();
-  });
-}
 </script>
 </body>
 </html>
