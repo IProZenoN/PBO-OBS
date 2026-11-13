@@ -265,6 +265,90 @@ async function analyzeFileStream(file) {
   return { acc, out, preview };
 }
 
+/* ---- lecture des archives .pbo ---- */
+
+/*
+ * Format PBO : [4 octets nuls] puis entrées "nom\0" + 5×u32 LE
+ * (magic, packing, taille originale, timestamp, taille), terminées par un
+ * nom vide, puis les données de chaque entrée dans l'ordre.
+ */
+async function parsePboHeader(file) {
+  const state = { pos: 0, buf: new Uint8Array(0), bufStart: 0 };
+  const first = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  if (first.length === 4 && first.every(b => b === 0)) state.pos = 4;
+  const entries = [];
+  while (true) {
+    const name = await readCString(file, state);
+    if (name === null) break;
+    if (name === '') break;
+    const header = new Uint8Array(await file.slice(state.pos, state.pos + 20).arrayBuffer());
+    if (header.length < 20) break;
+    state.pos += 20;
+    const dv = new DataView(header.buffer, header.byteOffset, header.byteLength);
+    entries.push({
+      name,
+      magic: dv.getUint32(0, true),
+      packing: dv.getUint32(4, true),
+      originalSize: dv.getUint32(8, true),
+      timestamp: dv.getUint32(12, true),
+      dataSize: dv.getUint32(16, true),
+      dataOffset: 0,
+    });
+  }
+  let offset = state.pos;
+  for (const e of entries) { e.dataOffset = offset; offset += e.dataSize; }
+  return entries;
+}
+
+async function readCString(file, state) {
+  while (true) {
+    const rel = state.buf.indexOf(0, state.pos - state.bufStart);
+    if (rel !== -1) {
+      const name = new TextDecoder().decode(state.buf.subarray(state.pos - state.bufStart, rel));
+      state.pos = state.bufStart + rel + 1;
+      return name;
+    }
+    state.bufStart = state.pos;
+    state.buf = new Uint8Array(await file.slice(state.pos, state.pos + 65536).arrayBuffer());
+    if (!state.buf.length) return null;
+  }
+}
+
+const PBO_TEXT = /\.(sqf|sqm|cpp|hpp|h|hh|txt|inc|ext|csv)$/i;
+
+async function analyzePbo(file) {
+  const acc = newAcc();
+  const out = [`// ===== ${file.name} (PBO) =====\n`];
+  let preview = '';
+  const entries = await parsePboHeader(file);
+  for (let n = 0; n < entries.length; n++) {
+    const e = entries[n];
+    if (!e.dataSize) continue;
+    const lower = e.name.toLowerCase();
+    const isRsa = lower.endsWith('.rsa.sqf');
+    const isText = PBO_TEXT.test(lower);
+    if (!isRsa && !isText) continue;
+    if (e.packing !== 0) {
+      out.push(`// --- ${e.name} : entrée compressée, non lue ---\n`);
+      continue;
+    }
+    const data = await file.slice(e.dataOffset, e.dataOffset + e.dataSize).text();
+    if (isRsa) {
+      const key = data.trim().replace(/^"+|"+$/g, '').trim();
+      if (key && !acc.keys.has(key)) { acc.keys.set(key, `rsa.sqf — ${e.name}`); acc.signals++; }
+    }
+    if (isText) {
+      accChunk(acc, data);
+      const rejoined = rejoinStrings(data);
+      out.push(`// --- ${e.name} ---\n`, rejoined, '\n');
+      if (preview.length < PREVIEW) preview += rejoined.slice(0, PREVIEW - preview.length);
+    }
+    setStatus(`${file.name} : entrée ${n + 1}/${entries.length} (${e.name})…`);
+    await yieldUI();
+  }
+  return { acc, out, preview };
+}
+
 /* ---- rendu ---- */
 
 function esc(s) {
@@ -365,7 +449,10 @@ async function runStreamFiles(list) {
     let preview = '';
     for (const file of list) {
       setStatus(`Analyse de ${file.name} (${(file.size / 1048576).toFixed(1)} Mo)…`);
-      const { acc, out, preview: filePreview } = await analyzeFileStream(file);
+      const isPbo = file.name.toLowerCase().endsWith('.pbo');
+      const { acc, out, preview: filePreview } = isPbo
+        ? await analyzePbo(file)
+        : await analyzeFileStream(file);
       total.joiners += acc.joiners; total.refs += acc.refs; total.compiles += acc.compiles;
       total.signals += acc.signals;
       for (const [k, kind] of acc.keys) if (!total.keys.has(k)) total.keys.set(k, `${kind} — ${file.name}`);
@@ -387,8 +474,9 @@ async function handleFiles(files) {
   const list = [...files];
   if (!list.length) return;
   const totalSize = list.reduce((s, f) => s + f.size, 0);
+  const hasPbo = list.some(f => f.name.toLowerCase().endsWith('.pbo'));
   try {
-    if (totalSize > SMALL) {
+    if (hasPbo || totalSize > SMALL) {
       await runStreamFiles(list);
     } else {
       const readers = list.map(f => f.text().then(t => `// ===== ${f.name} =====\n${t}`));
@@ -424,7 +512,7 @@ document.getElementById('btn-copy').addEventListener('click', () => {
 });
 
 const dz = document.getElementById('dropzone');
-const ACCEPT = '.sqf,.sqm,.hpp,.cpp,.txt';
+const ACCEPT = '.sqf,.sqm,.hpp,.cpp,.txt,.pbo';
 function openFilePicker() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.multiple = true; inp.accept = ACCEPT;

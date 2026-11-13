@@ -96,3 +96,59 @@ class TestCliRead:
         from obfusqf_deobf.cli import main
 
         assert main(["read", "no/such/file.sqf"]) == 1
+
+
+def _build_pbo(entries):
+    import struct
+
+    out = b"\x00\x00\x00\x00"
+    for name, data in entries:
+        out += name.encode("ascii") + b"\x00" + struct.pack("<5I", 0, 0, len(data), 0, len(data))
+    out += b"\x00"
+    for _, data in entries:
+        out += data
+    return out
+
+
+class TestPbo:
+    def test_scan_pbo_finds_rsa_key_and_guard(self, tmp_path):
+        from obfusqf_deobf.pbo import extract_pbo, scan_pbo
+
+        key = "ZP7CEI1MML39P9feyJhMtpTPG0dff7V4n+esAA09hir"
+        payload = _build_pbo(
+            [
+                ("config.cpp", b'class CfgFunctions { class MAV_Sub_ {} };\n'),
+                (
+                    "fn_init.sqf",
+                    OBFUSCATED.encode("utf-8"),
+                ),
+                ("k2\\dir\\file.rsa.sqf", key.encode("utf-8")),
+            ]
+        )
+        pbo = tmp_path / "addon.pbo"
+        pbo.write_bytes(payload)
+
+        report = scan_pbo(pbo)
+        assert report.is_obfuscated
+        assert len(report.entries) == 3
+        assert "fn_init.sqf" in report.obfuscated_entries
+        keys = {h.key for h in report.keys}
+        assert key in keys
+        assert "ZP7CEI1MML39P9feyJhMtpTPG0dff7V4n+esAA09hir" in keys
+
+        out_dir = tmp_path / "out"
+        written = extract_pbo(pbo, out_dir)
+        assert (out_dir / "k2" / "dir" / "file.rsa.sqf").read_text() == key
+        assert len(written) == 3
+
+    def test_find_pbos_expands_directory(self, tmp_path):
+        from obfusqf_deobf.pbo import find_pbos
+
+        (tmp_path / "a.pbo").write_bytes(_build_pbo([]))
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "b.pbo").write_bytes(_build_pbo([]))
+        (sub / "c.txt").write_text("nope")
+
+        found = find_pbos([tmp_path])
+        assert {p.name for p in found} == {"a.pbo", "b.pbo"}

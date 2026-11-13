@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .deobfuscate import deobfuscate
 from .keys import keys_from_tree
+from .pbo import extract_pbo, find_pbos, scan_pbo
 from .scanner import scan_tree
 
 
@@ -131,6 +132,39 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_pbo(args: argparse.Namespace) -> int:
+    paths = [Path(p) for p in args.paths]
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        print(f"error: path not found: {missing[0]}", file=sys.stderr)
+        return 1
+    pbos = find_pbos(paths)
+    if not pbos:
+        print("no .pbo found")
+        return 0
+    found_any = False
+    for pbo in pbos:
+        report = scan_pbo(pbo)
+        found_any = found_any or report.is_obfuscated
+        print(f"\n=== {pbo} — {len(report.entries)} entrées ===")
+        if report.skipped_compressed:
+            print(f"entrées compressées ignorées : {len(report.skipped_compressed)}")
+        if report.obfuscated_entries:
+            print("entrées obfusquées :")
+            for name in report.obfuscated_entries:
+                print(f"  {name}")
+        if report.keys:
+            print("clés :")
+            for hit in report.keys:
+                print(f"  {hit.key}\t[{hit.kind}]")
+        if not report.obfuscated_entries and not report.keys:
+            print("aucune trace ObfuSQF")
+        if args.extract:
+            written = extract_pbo(pbo, Path(args.extract) / pbo.stem)
+            print(f"extrait {len(written)} fichier(s) vers {args.extract}/{pbo.stem}")
+    return 0 if not found_any else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="obfusqf-deobf",
@@ -158,6 +192,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan = sub.add_parser("scan", help="scan a mission/mod tree for ObfuSQF traces")
     p_scan.add_argument("path", help="mission or mod directory")
     p_scan.set_defaults(func=_cmd_scan)
+
+    p_pbo = sub.add_parser("pbo", help="analyser un ou plusieurs .pbo et en extraire les clés")
+    p_pbo.add_argument("paths", nargs="+", help="fichiers .pbo et/ou dossiers contenant des .pbo")
+    p_pbo.add_argument("--extract", metavar="DIR", help="extraire aussi le contenu des archives vers DIR")
+    p_pbo.set_defaults(func=_cmd_pbo)
 
     return parser
 
