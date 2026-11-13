@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OBF Arma 3 — Déobfuscateur ObfuSQF</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #d29922;
+    --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    padding: 24px 32px 16px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #1a2129, var(--bg));
+  }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header h1 span { color: var(--accent); }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 32px 64px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; display: flex; flex-direction: column;
+  }
+  .panel h2 {
+    margin: 0 0 12px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted);
+  }
+  textarea {
+    flex: 1; min-height: 320px; width: 100%; resize: vertical;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; font-family: var(--mono); font-size: 13px;
+    line-height: 1.5;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+  button {
+    background: #21262d; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 16px; font-size: 14px; cursor: pointer;
+  }
+  button:hover { background: #30363d; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #1a1a1a; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  .dropzone {
+    border: 2px dashed var(--border); border-radius: 6px; padding: 14px;
+    text-align: center; color: var(--muted); font-size: 13px; cursor: pointer;
+    margin-top: 12px;
+  }
+  .dropzone:hover, .dropzone.drag { border-color: var(--accent); color: var(--text); }
+  #report { flex: 1; overflow: auto; font-size: 14px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; margin-bottom: 12px;
+  }
+  .badge.yes { background: rgba(248,81,73,.15); color: var(--bad); border: 1px solid var(--bad); }
+  .badge.no  { background: rgba(63,185,80,.15); color: var(--ok); border: 1px solid var(--ok); }
+  .section { margin-bottom: 14px; }
+  .section h3 { margin: 0 0 6px; font-size: 13px; color: var(--muted); }
+  .kv {
+    font-family: var(--mono); font-size: 12.5px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    margin: 4px 0; word-break: break-all;
+  }
+  .kv b { color: var(--accent); font-weight: 600; }
+  pre#code {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-all; margin: 0; color: #a5d6ff;
+    max-height: 420px; overflow: auto;
+  }
+  .empty { color: var(--muted); font-size: 14px; padding: 24px 0; text-align: center; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 16px; }
+  footer code { font-family: var(--mono); }
+</style>
+</head>
+<body>
+<header>
+  <h1>OBF Arma 3 — <span>Déobfuscateur ObfuSQF</span></h1>
+  <p>Analyse de missions protégées par ObfuSQF : clé stockée en clair, chaînes découpées avec + ou /, dossiers aléatoires. Tout tourne dans ton navigateur, rien n'est envoyé nulle part.</p>
+</header>
+<main>
+  <div class="grid">
+    <div class="panel">
+      <h2>Entrée — code SQF obfusqué</h2>
+      <textarea id="input" spellcheck="false" placeholder="Colle ici le contenu d'une fonction MAV_Sub_ / mav_tag_fnc_* ou d'un fichier .sqf obfusqué…"></textarea>
+      <div class="dropzone" id="dropzone">ou glisse-dépose ici un ou plusieurs fichiers (.sqf, .sqm, …)</div>
+      <div class="row">
+        <button class="primary" id="btn-run">Déobfusquer</button>
+        <button id="btn-clear">Effacer</button>
+        <button id="btn-sample">Charger l'exemple</button>
+        <button id="btn-copy">Copier le résultat</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Rapport &amp; résultat</h2>
+      <div id="report"><div class="empty">Aucune analyse pour l'instant.<br>Colle du code ou dépose des fichiers puis clique « Déobfusquer ».</div></div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:20px;">
+    <h2>Code déobfusqué</h2>
+    <pre id="code">// Le code recollé apparaîtra ici.</pre>
+  </div>
+</main>
+<footer>
+  Basé sur le schéma ObfuSQF documenté — <code>clé en clair</code> + <code>chaînes 'a'+'b'</code> + <code>dossiers aléatoires</code>. Outil statique : aucune donnée ne quitte ton navigateur.
+</footer>
+
+<script>
+const SAMPLE = `[]call compile('i'+'f('+'isS'+'erver)exi'+'tWit'+'h();if((lo'+'adF'+'ile "O'+'bf'+'uS'+'Q'+'F'+'\\'+'pjjboo0shh\\arrdyhg2n3.rs'+'a.sq'+'f") fi'+'nd "ZP7CEI1MML39P9feyJhMtpTPG0dff7V4n+esAA09hir") = '+'= -1)th'+'en(pre'+'proc'+'essFi'+'le "VGJHIMEI\\ITTSKCTE.sqf";);');`;
+
+const JOINER = /'\s*[+/]\s*'/g;
+const LOADFILE_FIND = /loadFile\s+"([^"]*?\.rsa\.sqf)"\s*\)\s*find\s+"([^"]+)"/gi;
+const FIND_CMP = /find\s+"([^"]+)"\s*=\s*=?\s*=\s*-1/gi;
+const RANDOM_SEGMENT = /(?:^|[^A-Za-z0-9])([a-z0-9]{8,12})(?![A-Za-z0-9])/;
+const OBFUSQF_REF = /\bObfuSQF\b/gi;
+const CALL_COMPILE = /call\s+compile\s*\(/gi;
+
+function rejoinStrings(text) {
+  return text.replace(JOINER, '');
+}
+
+function countJoiners(text) {
+  return (text.match(JOINER) || []).length;
+}
+
+function extractKeys(text) {
+  const merged = rejoinStrings(text);
+  const keys = new Map();
+  let m;
+  while ((m = LOADFILE_FIND.exec(merged)) !== null) {
+    if (!keys.has(m[2])) keys.set(m[2], `garde loadFile ${m[1]}`);
+  }
+  while ((m = FIND_CMP.exec(merged)) !== null) {
+    if (!keys.has(m[1])) keys.set(m[1], 'garde find == -1');
+  }
+  // garde == obfusqué en "= '+'= -1" (déjà recollé en "= = -1" ci-dessus
+  // via FIND_CMP tolérant). Fichiers *.rsa.sqf déposés :
+  while ((m = /([A-Za-z0-9_\\/.-]*\.rsa\.sqf)/gi.exec(merged)) !== null) { break; }
+  return [...keys.entries()].map(([key, kind]) => ({ key, kind }));
+}
+
+function randomizedPaths(text) {
+  const out = [];
+  const re = /"([^"\n]*\\[^"\n]*)"/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const segments = m[1].replace(/^\\+|\\+$/g, '').split(/\\+/).filter(Boolean);
+    if (segments.length < 2) continue;
+    const randomish = segments.filter(s => RANDOM_SEGMENT.test(s) && s.length >= 8 && /^[a-z0-9]+$/.test(s));
+    if (randomish.length >= Math.max(2, segments.length - 1)) out.push(m[1]);
+  }
+  return [...new Set(out)];
+}
+
+function analyze(text) {
+  const joiners = countJoiners(text);
+  const keys = extractKeys(text);
+  const paths = randomizedPaths(text);
+  const refs = (text.match(OBFUSQF_REF) || []).length;
+  const compiles = (text.match(CALL_COMPILE) || []).length;
+  const obfuscated = joiners > 0 || keys.length > 0 || refs > 0 || paths.length > 0;
+  return { obfuscated, joiners, keys, paths, refs, compiles };
+}
+
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function render(r, code) {
+  const report = document.getElementById('report');
+  let html = '';
+  html += r.obfuscated
+    ? '<span class="badge yes">⚠ Mission obfusquée détectée</span>'
+    : '<span class="badge no">✓ Aucune trace ObfuSQF détectée</span>';
+
+  html += '<div class="section"><h3>Signaux</h3>';
+  html += `<div class="kv">Séquences de chaînes découpées recollées : <b>${r.joiners}</b></div>`;
+  html += `<div class="kv">Appels <b>call compile(...)</b> : ${r.compiles}</div>`;
+  html += `<div class="kv">Références <b>ObfuSQF</b> : ${r.refs}</div>`;
+  html += '</div>';
+
+  html += '<div class="section"><h3>Clés trouvées</h3>';
+  html += r.keys.length
+    ? r.keys.map(k => `<div class="kv"><b>${esc(k.key)}</b><br><span style="color:var(--muted)">${esc(k.kind)}</span></div>`).join('')
+    : '<div class="kv" style="color:var(--muted)">aucune</div>';
+  html += '</div>';
+
+  html += '<div class="section"><h3>Chemins à dossiers aléatoires</h3>';
+  html += r.paths.length
+    ? r.paths.map(p => `<div class="kv">${esc(p)}</div>`).join('')
+    : '<div class="kv" style="color:var(--muted)">aucun</div>';
+  html += '</div>';
+
+  report.innerHTML = html;
+  document.getElementById('code').textContent = code;
+}
+
+function run() {
+  const text = document.getElementById('input').value;
+  if (!text.trim()) { alert('Colle d\'abord du code obfusqué.'); return; }
+  const r = analyze(text);
+  render(r, rejoinStrings(text));
+}
+
+document.getElementById('btn-run').addEventListener('click', run);
+document.getElementById('btn-clear').addEventListener('click', () => {
+  document.getElementById('input').value = '';
+  document.getElementById('report').innerHTML = '<div class="empty">Aucune analyse pour l\'instant.</div>';
+  document.getElementById('code').textContent = '// Le code recollé apparaîtra ici.';
+});
+document.getElementById('btn-sample').addEventListener('click', () => {
+  document.getElementById('input').value = SAMPLE;
+  run();
+});
+document.getElementById('btn-copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('code').textContent)
+    .then(() => { const b = document.getElementById('btn-copy'); const t = b.textContent; b.textContent = 'Copié !'; setTimeout(() => b.textContent = t, 1500); });
+});
+
+const dz = document.getElementById('dropzone');
+dz.addEventListener('click', () => {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.multiple = true;
+  inp.onchange = () => handleFiles(inp.files);
+  inp.click();
+});
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag');
+  handleFiles(e.dataTransfer.files);
+});
+
+function handleFiles(files) {
+  const readers = [...files].map(f => f.text().then(t => `// ===== ${f.name} =====\n${t}`));
+  Promise.all(readers).then(parts => {
+    document.getElementById('input').value = parts.join('\n\n');
+    run();
+  });
+}
+</script>
+</body>
+</html>

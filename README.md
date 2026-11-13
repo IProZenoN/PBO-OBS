@@ -1,7 +1,15 @@
 # obfusqf-deobf
 
 Déobfuscateur pour les missions Arma 3 protégées par **ObfuSQF**, basé sur le
-schéma décrit dans le document public « Hallo i bims der Deobfuscator » :
+schéma décrit dans le document public « Hallo i bims der Deobfuscator ».
+
+## Version web (sans installation)
+
+`web/index.html` est un outil **100 % client** (un seul fichier, aucune
+ dépendance) : ouvre-le dans un navigateur, colle le code obfusqué ou
+ glisse-dépose des fichiers, et obtiens le rapport (clés, chemins aléatoires,
+ signaux) + le code recollé. Pour l'héberger gratuitement : GitHub →
+ *Settings → Pages* → branche `main`, dossier `/web`.
 
 - la **clé** est stockée en clair dans la mission (fichier `*.rsa.sqf`, ou
   garde `loadFile "...rsa.sqf") find "CLÉ" == -1` dans la fonction compilée) ;
