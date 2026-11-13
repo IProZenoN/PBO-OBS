@@ -221,21 +221,25 @@ function splitPieces(text, max = PIECE) {
 async function analyzeTextBig(text) {
   const acc = newAcc();
   const out = [];
+  let preview = '';
   const pieces = splitPieces(text);
   for (let i = 0; i < pieces.length; i++) {
+    const rejoined = rejoinStrings(pieces[i]);
     accChunk(acc, pieces[i]);
-    out.push(rejoinStrings(pieces[i]));
+    out.push(rejoined);
+    if (preview.length < PREVIEW) preview += rejoined.slice(0, PREVIEW - preview.length);
     if (i % 4 === 0) {
       setStatus(`Analyse… ${Math.round(((i + 1) / pieces.length) * 100)} %`);
       await yieldUI();
     }
   }
-  return { acc, out };
+  return { acc, out, preview };
 }
 
 async function analyzeFileStream(file) {
   const acc = newAcc();
   const out = [];
+  let preview = '';
   let pos = 0, rest = '', i = 0;
   while (pos < file.size) {
     const slice = file.slice(pos, Math.min(pos + PIECE, file.size));
@@ -249,14 +253,16 @@ async function analyzeFileStream(file) {
     }
     rest = buf.slice(piece.length);
     pos += piece.length - rest.length;
+    const rejoined = rejoinStrings(piece);
     accChunk(acc, piece);
-    out.push(rejoinStrings(piece));
+    out.push(rejoined);
+    if (preview.length < PREVIEW) preview += rejoined.slice(0, PREVIEW - preview.length);
     if (++i % 4 === 0) {
       setStatus(`Analyse de ${file.name}… ${Math.round((pos / file.size) * 100)} %`);
       await yieldUI();
     }
   }
-  return { acc, out };
+  return { acc, out, preview };
 }
 
 /* ---- rendu ---- */
@@ -271,6 +277,8 @@ function accIsObfuscated(acc) {
   return acc.signals > 0 || acc.keys.size > 0 || acc.paths.size > 0;
 }
 
+const MAX_SHOWN = 50;
+
 function renderAcc(acc, preview, note) {
   const report = document.getElementById('report');
   let html = '';
@@ -284,15 +292,19 @@ function renderAcc(acc, preview, note) {
   html += `<div class="kv">Références <b>ObfuSQF</b> : ${acc.refs}</div>`;
   html += '</div>';
 
-  html += '<div class="section"><h3>Clés trouvées</h3>';
-  html += acc.keys.size
-    ? [...acc.keys.entries()].map(([k, kind]) => `<div class="kv"><b>${esc(k)}</b><br><span style="color:var(--muted)">${esc(kind)}</span></div>`).join('')
+  html += `<div class="section"><h3>Clés trouvées (${acc.keys.size})</h3>`;
+  const keyEntries = [...acc.keys.entries()];
+  html += keyEntries.length
+    ? keyEntries.slice(0, MAX_SHOWN).map(([k, kind]) => `<div class="kv"><b>${esc(k)}</b><br><span style="color:var(--muted)">${esc(kind)}</span></div>`).join('')
+      + (keyEntries.length > MAX_SHOWN ? `<div class="kv" style="color:var(--muted)">… et ${keyEntries.length - MAX_SHOWN} autres (voir fichier téléchargeable)</div>` : '')
     : '<div class="kv" style="color:var(--muted)">aucune</div>';
   html += '</div>';
 
-  html += '<div class="section"><h3>Chemins à dossiers aléatoires</h3>';
-  html += acc.paths.size
-    ? [...acc.paths].map(p => `<div class="kv">${esc(p)}</div>`).join('')
+  html += `<div class="section"><h3>Chemins à dossiers aléatoires (${acc.paths.size})</h3>`;
+  const pathList = [...acc.paths];
+  html += pathList.length
+    ? pathList.slice(0, MAX_SHOWN).map(p => `<div class="kv">${esc(p)}</div>`).join('')
+      + (pathList.length > MAX_SHOWN ? `<div class="kv" style="color:var(--muted)">… et ${pathList.length - MAX_SHOWN} autres</div>` : '')
     : '<div class="kv" style="color:var(--muted)">aucun</div>';
   html += '</div>';
 
@@ -327,8 +339,8 @@ async function run() {
   document.getElementById('btn-run').disabled = true;
   try {
     if (text.length > SMALL) {
-      const { acc, out } = await analyzeTextBig(text);
-      renderAcc(acc, out.join('').slice(0, PREVIEW), '— aperçu des 60 premiers Ko (fichier complet téléchargeable)');
+      const { acc, out, preview } = await analyzeTextBig(text);
+      renderAcc(acc, preview, '— aperçu des 60 premiers Ko (fichier complet téléchargeable)');
       offerDownload(out, 'deobfuscated.sqf');
     } else {
       const r = analyze(text);
@@ -350,16 +362,20 @@ async function runStreamFiles(list) {
   try {
     const total = newAcc();
     const allOut = [];
+    let preview = '';
     for (const file of list) {
       setStatus(`Analyse de ${file.name} (${(file.size / 1048576).toFixed(1)} Mo)…`);
-      const { acc, out } = await analyzeFileStream(file);
+      const { acc, out, preview: filePreview } = await analyzeFileStream(file);
       total.joiners += acc.joiners; total.refs += acc.refs; total.compiles += acc.compiles;
       total.signals += acc.signals;
       for (const [k, kind] of acc.keys) if (!total.keys.has(k)) total.keys.set(k, `${kind} — ${file.name}`);
       for (const p of acc.paths) total.paths.add(p);
       allOut.push(`// ===== ${file.name} =====\n`, ...out, '\n');
+      if (preview.length < PREVIEW) {
+        preview += (`\n// ===== ${file.name} =====\n` + filePreview).slice(0, PREVIEW - preview.length);
+      }
     }
-    renderAcc(total, allOut.join('').slice(0, PREVIEW), '— aperçu des 60 premiers Ko (fichier complet téléchargeable)');
+    renderAcc(total, preview, '— aperçu des 60 premiers Ko (fichier complet téléchargeable)');
     offerDownload(allOut, 'deobfuscated.sqf');
     setStatus('');
   } finally {
@@ -371,15 +387,23 @@ async function handleFiles(files) {
   const list = [...files];
   if (!list.length) return;
   const totalSize = list.reduce((s, f) => s + f.size, 0);
-  if (totalSize > SMALL) {
-    await runStreamFiles(list);
-  } else {
-    const readers = list.map(f => f.text().then(t => `// ===== ${f.name} =====\n${t}`));
-    const parts = await Promise.all(readers);
-    document.getElementById('input').value = parts.join('\n\n');
-    await run();
+  try {
+    if (totalSize > SMALL) {
+      await runStreamFiles(list);
+    } else {
+      const readers = list.map(f => f.text().then(t => `// ===== ${f.name} =====\n${t}`));
+      const parts = await Promise.all(readers);
+      document.getElementById('input').value = parts.join('\n\n');
+      await run();
+    }
+  } catch (err) {
+    setStatus(`❌ Erreur pendant l'analyse : ${err && err.message ? err.message : err}`);
+    console.error(err);
   }
 }
+
+window.addEventListener('error', e => setStatus(`❌ Erreur : ${e.message}`));
+window.addEventListener('unhandledrejection', e => setStatus(`❌ Erreur : ${e.reason && e.reason.message ? e.reason.message : e.reason}`));
 
 document.getElementById('btn-run').addEventListener('click', run);
 document.getElementById('btn-clear').addEventListener('click', () => {
