@@ -1,7 +1,15 @@
 # obfusqf-deobf
 
 Déobfuscateur pour les missions Arma 3 protégées par **ObfuSQF**, basé sur le
-schéma décrit dans le document public « Hallo i bims der Deobfuscator » :
+schéma décrit dans le document public « Hallo i bims der Deobfuscator ».
+
+## Version web (sans installation)
+
+`web/index.html` est un outil **100 % client** (un seul fichier, aucune
+ dépendance) : ouvre-le dans un navigateur, colle le code obfusqué ou
+ glisse-dépose des fichiers, et obtiens le rapport (clés, chemins aléatoires,
+ signaux) + le code recollé. Pour l'héberger gratuitement : GitHub →
+ *Settings → Pages* → branche `main`, dossier `/web`.
 
 - la **clé** est stockée en clair dans la mission (fichier `*.rsa.sqf`, ou
   garde `loadFile "...rsa.sqf") find "CLÉ" == -1` dans la fonction compilée) ;
@@ -31,6 +39,14 @@ python -m obfusqf_deobf keys <dossier_mission>
 # Déobfusquer un fichier .sqf (ou stdin avec -)
 python -m obfusqf_deobf deobfuscate function.sqf
 python -m obfusqf_deobf deobfuscate - --json < function.sqf
+
+# Lire un fichier .sqf avec numéros de ligne (--no-numbers pour brut, --json)
+python -m obfusqf_deobf read function.sqf
+
+# Analyser un ou plusieurs .pbo (clés des *.rsa.sqf embarqués + code obfusqué)
+python -m obfusqf_deobf pbo addon1.pbo addon2.pbo
+python -m obfusqf_deobf pbo dossier/addons/            # tous les .pbo du dossier
+python -m obfusqf_deobf pbo addon.pbo --extract out/   # + extraction du contenu
 ```
 
 ### Exemple
@@ -49,6 +65,8 @@ key (loadFile ObfuSQF\...rsa.sqf): ZP7CEI1MML39P9feyJhMtpTPG0dff7V4n+esAA09hir
 - L'outil recolle les chaînes et extrait les clés ; il ne déchiffre pas le
   contenu des `.sqf` protégés par la clé (le schéma ObfuSQF documenté ne fait
   qu'une comparaison de clé, pas un vrai chiffrement).
+- Les entrées PBO compressées (packing ≠ 0, rare) sont signalées mais non
+  lues.
 - Un `'+'` ou `'/'` légitime *entre* deux littéraux dans du SQF honnête peut
   être fusionné par erreur — vérifier la sortie avant utilisation.
 
@@ -59,6 +77,7 @@ obfusqf_deobf/
   strings.py       recollage des littéraux découpés
   keys.py          extraction des clés (rsa.sqf + gardes loadFile/find)
   scanner.py       scan d'arborescence + rapport
+  pbo.py           lecture des archives .pbo (entrées, extraction, scan)
   deobfuscate.py   pipeline haut niveau
   cli.py           interface en ligne de commande
 tests/             pytest
