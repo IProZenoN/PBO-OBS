@@ -79,3 +79,20 @@ class TestScanner:
         (tmp_path / "init.sqf").write_text(PLAIN, encoding="utf-8")
         report = scan_tree(tmp_path)
         assert not report.is_obfuscated
+
+
+class TestCliRead:
+    def test_read_prints_numbered_lines(self, tmp_path, capsys):
+        from obfusqf_deobf.cli import main
+
+        target = tmp_path / "fn.sqf"
+        target.write_text("hint 'a';\nhint 'b';\n", encoding="utf-8")
+        assert main(["read", str(target)]) == 0
+        out = capsys.readouterr().out
+        assert "1 | hint 'a';" in out
+        assert "2 | hint 'b';" in out
+
+    def test_read_missing_file_fails(self, capsys):
+        from obfusqf_deobf.cli import main
+
+        assert main(["read", "no/such/file.sqf"]) == 1

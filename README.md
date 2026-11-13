@@ -39,6 +39,9 @@ python -m obfusqf_deobf keys <dossier_mission>
 # Déobfusquer un fichier .sqf (ou stdin avec -)
 python -m obfusqf_deobf deobfuscate function.sqf
 python -m obfusqf_deobf deobfuscate - --json < function.sqf
+
+# Lire un fichier .sqf avec numéros de ligne (--no-numbers pour brut, --json)
+python -m obfusqf_deobf read function.sqf
 ```
 
 ### Exemple

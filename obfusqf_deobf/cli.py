@@ -55,6 +55,36 @@ def _cmd_deobfuscate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_read(args: argparse.Namespace) -> int:
+    path = Path(args.file)
+    if not path.is_file():
+        print(f"error: file not found: {path}", file=sys.stderr)
+        return 1
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"error: cannot read {path}: {exc}", file=sys.stderr)
+        return 1
+    lines = text.splitlines()
+    if args.json:
+        import json
+
+        print(
+            json.dumps(
+                {"path": str(path), "lines": len(lines), "bytes": path.stat().st_size, "content": text},
+                indent=2,
+            )
+        )
+        return 0
+    print(f"{path} — {len(lines)} lignes, {path.stat().st_size} octets")
+    if args.numbers:
+        for number, line in enumerate(lines, 1):
+            print(f"{number:5} | {line}")
+    else:
+        print(text, end="" if text.endswith("\n") else "\n")
+    return 0
+
+
 def _cmd_keys(args: argparse.Namespace) -> int:
     root = Path(args.path)
     if not root.exists():
@@ -112,6 +142,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_deob.add_argument("file", help="path to the .sqf file, or '-' for stdin")
     p_deob.add_argument("--json", action="store_true", help="machine-readable output")
     p_deob.set_defaults(func=_cmd_deobfuscate)
+
+    p_read = sub.add_parser("read", help="lire un fichier .sqf (avec numéros de ligne)")
+    p_read.add_argument("file", help="path to the .sqf file")
+    p_read.add_argument("--json", action="store_true", help="machine-readable output")
+    p_read.add_argument(
+        "--no-numbers", dest="numbers", action="store_false", help="print raw content"
+    )
+    p_read.set_defaults(func=_cmd_read, numbers=True)
 
     p_keys = sub.add_parser("keys", help="extract every key found under a path")
     p_keys.add_argument("path", help="mission or mod directory")

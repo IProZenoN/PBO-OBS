@@ -98,6 +98,7 @@
       <div id="status"></div>
       <div class="row">
         <button class="primary" id="btn-run">Déobfusquer</button>
+        <button id="btn-open">📁 Ouvrir un fichier .sqf</button>
         <button id="btn-clear">Effacer</button>
         <button id="btn-sample">Charger l'exemple</button>
         <button id="btn-copy">Copier le résultat</button>
@@ -399,12 +400,15 @@ document.getElementById('btn-copy').addEventListener('click', () => {
 });
 
 const dz = document.getElementById('dropzone');
-dz.addEventListener('click', () => {
+const ACCEPT = '.sqf,.sqm,.hpp,.cpp,.txt';
+function openFilePicker() {
   const inp = document.createElement('input');
-  inp.type = 'file'; inp.multiple = true;
+  inp.type = 'file'; inp.multiple = true; inp.accept = ACCEPT;
   inp.onchange = () => handleFiles(inp.files);
   inp.click();
-});
+}
+dz.addEventListener('click', openFilePicker);
+document.getElementById('btn-open').addEventListener('click', openFilePicker);
 dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
 dz.addEventListener('drop', e => {
