@@ -177,6 +177,7 @@ story.append(img("page-0004-image-0002.jpg", 7 * cm))
 story.append(Spacer(1, 10))
 story.append(Paragraph("<b>Cordialement, ImSorry</b>", body))
 story.append(PageBreak())
+story.append(Spacer(1, 1))
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 doc = SimpleDocTemplate(str(OUT), pagesize=A4, topMargin=1.8 * cm, bottomMargin=1.8 * cm, leftMargin=2 * cm, rightMargin=2 * cm, title="Hallo i bims der Deobfuscator — Traduction FR")
